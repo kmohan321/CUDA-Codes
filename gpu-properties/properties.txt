@@ -1,0 +1,13 @@
+Device 0: NVIDIA GeForce RTX 4050 Laptop GPU
+=======================================
+  Compute Capability:       8.9
+  Multiprocessors (SMs):    20
+  Max Threads per SM:       1536
+  Max Threads per Block:    1024
+  Warp Size:                32
+  Global Memory (VRAM):     6140.5 MB
+  L2 Cache Size:            24576 KB
+  Total Registers per SM:   65536
+  Max Registers per Block:  65536
+  Shared Mem per SM:        100 KB
+  Shared Mem per Block:     48 KB
