@@ -10,7 +10,7 @@ Comparison of custom kernels against `cuBLAS` (PyTorch default) for size `4096 x
 | Naive Implementation | ~750 | 1.0x | Baseline |
 | Tiled | ~900 | 1.2x | Reduced Global Mem Access by using shared memory |
 | Thread Coarsened (4x) | ~2,950 | 3.9x | Increased Instruction-Level Parallelism (mupliple ops per thread) |
-| **Thread Coarsened (8x)** | **~5,000** | **6.6x** | **66% of cuBLAS Speed** |
+| **Thread Coarsened (8x)** | **~4,500** | **6x** | **60% of cuBLAS Speed** |
 | *cuBLAS (Reference)* | *~7,500* | *--* | *--* |
 
 ### 2. Rotary Positional Embeddings (RoPE)

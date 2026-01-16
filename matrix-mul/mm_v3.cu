@@ -1,6 +1,7 @@
 #include<iostream>
 #include <cmath>
 #include<cuda_runtime.h>
+#include<torch/extension.h>
 
 #define tile 16
 #define coarse_factor 8
@@ -11,8 +12,8 @@ __global__ void shared_mm(float *a, float *b, float *c,
     int idx = threadIdx.x;
     int idy = threadIdx.y;
 
-    int row = blockIdx.y * blockDim.y + idy;
-    int col = blockIdx.x * blockDim.x + idx;
+    int row = blockIdx.y * (blockDim.y * coarse_factor) + idy;
+    int col = blockIdx.x * (blockDim.x * coarse_factor) + idx;
     
     extern __shared__ float smem[];
 
@@ -77,92 +78,118 @@ __global__ void shared_mm(float *a, float *b, float *c,
     }
 }
 
-int main() {
+torch::Tensor matrix_mul(torch::Tensor A, torch::Tensor B){
 
-    int s = 4096;
-    int M = s, N = s, K = s;
+  int M = A.size(0); 
+  int N = B.size(1);
+  int K = A.size(1);
 
-    size_t bytes = N * N * sizeof(float);
+  dim3 block(tile, tile);
+  dim3 grid((N + tile*coarse_factor - 1) / (tile*coarse_factor),
+            (N + tile*coarse_factor - 1) / (tile*coarse_factor));
 
-    float* hA = (float*)malloc(bytes);
-    float* hB = (float*)malloc(bytes);
-    float* hC = (float*)malloc(bytes);
-    float* hC_ref = (float*)malloc(bytes);
+  int smem_size = 2 * tile * (tile * coarse_factor) * sizeof(float);
 
-    for (int i = 0; i < N * N; i++) {
-        hA[i] = 1.0f;
-        hB[i] = 1.0f;
-        hC_ref[i] = 0.0f;
-    }
+  torch::Device device(torch::kCUDA);
+  auto C = torch::zeros({M,N}, device);
 
-    //cpu mm
-    // for (int i = 0; i < N; i++) {
-    //     for (int j = 0; j < N; j++) {
-    //         float sum = 0.0f;
-    //         for (int k = 0; k < N; k++) {
-    //             sum += hA[i * N + k] * hB[k * N + j];
-    //         }
-    //         hC_ref[i * N + j] = sum;
-    //     }
-    // }
+  shared_mm<<<grid, block, smem_size>>>(
+    A.data_ptr<float>(),
+    B.data_ptr<float>(),
+    C.data_ptr<float>(),
+    M, N, K);
 
-    float *dA, *dB, *dC;
-    cudaMalloc(&dA, bytes);
-    cudaMalloc(&dB, bytes);
-    cudaMalloc(&dC, bytes);
-
-    cudaMemcpy(dA, hA, bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(dB, hB, bytes, cudaMemcpyHostToDevice);
-
-    dim3 block(tile, tile);
-    dim3 grid((N + tile*coarse_factor - 1) / (tile*coarse_factor),
-              (N + tile*coarse_factor - 1) / (tile*coarse_factor));
-
-    size_t shared_bytes = 2 * tile * (tile * coarse_factor) * sizeof(float);
-
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-
-    //warp up
-    shared_mm<<<grid, block, shared_bytes>>>(dA, dB, dC, M, N, K);
-
-    cudaEventRecord(start);
-    shared_mm<<<grid, block, shared_bytes>>>(dA, dB, dC, M, N, K);
-    cudaEventRecord(stop);
-
-    cudaDeviceSynchronize();
-
-    float ms = 0.0f;
-    cudaEventElapsedTime(&ms, start, stop);
-    cudaMemcpy(hC, dC, bytes, cudaMemcpyDeviceToHost);
-
-
-    // double max_error = 0.0;
-    // for (int i = 0; i < N * N; i++) {
-    //     double diff = std::abs(hC[i] - hC_ref[i]);
-    //     max_error = std::max(max_error, diff);
-    // }
-
-    // if (max_error < 1e-3) {
-    //     std::cout << " Result correct\n";
-    // } else {
-    //     std::cout << " Result incorrect, max error = " << max_error << "\n";
-    // }
-
-    double flops = 2.0 * N * N * N;
-    double gflops = (flops / (ms / 1000.0)) / 1e9;
-
-    std::cout << "Time: " << ms << " ms\n";
-    std::cout << "GFLOPS: " << gflops << "\n";
-
-    cudaFree(dA);
-    cudaFree(dB);
-    cudaFree(dC);
-    free(hA);
-    free(hB);
-    free(hC);
-    free(hC_ref);
-
-    return 0;
+  return C;
+  
 }
+
+
+// int main() {
+
+//     int s = 4096;
+//     int M = s, N = s, K = s;
+
+//     size_t bytes = N * N * sizeof(float);
+
+//     float* hA = (float*)malloc(bytes);
+//     float* hB = (float*)malloc(bytes);
+//     float* hC = (float*)malloc(bytes);
+//     float* hC_ref = (float*)malloc(bytes);
+
+//     for (int i = 0; i < N * N; i++) {
+//         hA[i] = 1.0f;
+//         hB[i] = 1.0f;
+//         hC_ref[i] = 0.0f;
+//     }
+
+//     //cpu mm
+//     // for (int i = 0; i < N; i++) {
+//     //     for (int j = 0; j < N; j++) {
+//     //         float sum = 0.0f;
+//     //         for (int k = 0; k < N; k++) {
+//     //             sum += hA[i * N + k] * hB[k * N + j];
+//     //         }
+//     //         hC_ref[i * N + j] = sum;
+//     //     }
+//     // }
+
+//     float *dA, *dB, *dC;
+//     cudaMalloc(&dA, bytes);
+//     cudaMalloc(&dB, bytes);
+//     cudaMalloc(&dC, bytes);
+
+//     cudaMemcpy(dA, hA, bytes, cudaMemcpyHostToDevice);
+//     cudaMemcpy(dB, hB, bytes, cudaMemcpyHostToDevice);
+
+//     dim3 block(tile, tile);
+//     dim3 grid((N + tile*coarse_factor - 1) / (tile*coarse_factor),
+//               (N + tile*coarse_factor - 1) / (tile*coarse_factor));
+
+//     size_t shared_bytes = 2 * tile * (tile * coarse_factor) * sizeof(float);
+
+//     cudaEvent_t start, stop;
+//     cudaEventCreate(&start);
+//     cudaEventCreate(&stop);
+
+//     //warp up
+//     shared_mm<<<grid, block, shared_bytes>>>(dA, dB, dC, M, N, K);
+
+//     cudaEventRecord(start);
+//     shared_mm<<<grid, block, shared_bytes>>>(dA, dB, dC, M, N, K);
+//     cudaEventRecord(stop);
+
+//     cudaDeviceSynchronize();
+
+//     float ms = 0.0f;
+//     cudaEventElapsedTime(&ms, start, stop);
+//     cudaMemcpy(hC, dC, bytes, cudaMemcpyDeviceToHost);
+
+
+//     // double max_error = 0.0;
+//     // for (int i = 0; i < N * N; i++) {
+//     //     double diff = std::abs(hC[i] - hC_ref[i]);
+//     //     max_error = std::max(max_error, diff);
+//     // }
+
+//     // if (max_error < 1e-3) {
+//     //     std::cout << " Result correct\n";
+//     // } else {
+//     //     std::cout << " Result incorrect, max error = " << max_error << "\n";
+//     // }
+
+//     double flops = 2.0 * N * N * N;
+//     double gflops = (flops / (ms / 1000.0)) / 1e9;
+
+//     std::cout << "Time: " << ms << " ms\n";
+//     std::cout << "GFLOPS: " << gflops << "\n";
+
+//     cudaFree(dA);
+//     cudaFree(dB);
+//     cudaFree(dC);
+//     free(hA);
+//     free(hB);
+//     free(hC);
+//     free(hC_ref);
+
+//     return 0;
+// }
